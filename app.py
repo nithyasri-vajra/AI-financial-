@@ -1,104 +1,167 @@
 import os
-import json
-import time
 import streamlit as st
+
 from dotenv import load_dotenv
 from google import genai
 
-# Load API key from .env
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
+from dashboard import show_dashboard
+
 load_dotenv()
+
 api_key = os.getenv("GEMINI_API_KEY")
 
 if not api_key:
     st.error("GEMINI_API_KEY is missing in the .env file.")
     st.stop()
 
-# Create Gemini client
+
 client = genai.Client(api_key=api_key)
 
-# ===== LOAD FILE REGISTRY (Pre-connected documents) =====
-try:
-    with open("file_registry.json", "r") as f:
-        file_registry = json.load(f)
-except FileNotFoundError:
-    st.error("file_registry.json not found. Run upload_documents.py first!")
-    st.stop()
+DRIVE_FOLDER_ID = "16f8bYqRFyzL3-eNFY2XL9FrmtI8K61ar"
 
-# ===== UI =====
-st.title("📊 AI Financial Analysis")
+# Google Drive
+SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 
-# Show which companies are available
-companies_list = list(file_registry["companies"].keys())
-company_names = {key: file_registry["companies"][key]["name"] for key in companies_list}
+if os.path.exists("token.json"):
+    creds = Credentials.from_authorized_user_file(
+        "token.json",
+        SCOPES
+    )
+else:
+    flow = InstalledAppFlow.from_client_secrets_file(
+        "finanicial-drive-credential.json",
+        SCOPES
+    )
 
-# User selects company
-selected_company = st.selectbox(
-    "Select Company",
-    companies_list,
-    format_func=lambda x: company_names[x]
+    creds = flow.run_local_server(port=0)
+
+    with open("token.json", "w") as token:
+        token.write(creds.to_json())
+
+
+drive = build(
+    "drive",
+    "v3",
+    credentials=creds
 )
 
-# User asks question
-question = st.text_input("Ask a question about the documents")
 
-# Ask Gemini
-if st.button("Ask Gemini"):
-    if not question.strip():
-        st.warning("Please enter a question.")
-        st.stop()
+# UI
+page = st.sidebar.radio(
+    "Go to",
+    ["AI Chat", "Dashboard"]
+)
 
-    with st.spinner("Analyzing documents..."):
-        try:
-            # Get file IDs for selected company
-            company_docs = file_registry["companies"][selected_company]["documents"]
-            
-            # Get file objects from Gemini using stored IDs
-            gemini_files = []
-            doc_names = []
-            
-            for doc_type, doc_info in company_docs.items():
-                file_id = doc_info["file_id"]
-                file_obj = client.files.get(name=file_id)
-                gemini_files.append(file_obj)
-                doc_names.append(doc_info["original_filename"])
+if page == "AI Chat":
 
-            # Create prompt
-            prompt = f"""
-You are a Senior Financial Analyst AI.
-
-You are analyzing financial documents for: {company_names[selected_company]}
-
-Documents available:
-{', '.join(doc_names)}
-
-RULES:
-1. Answer ONLY using information from the provided documents
-2. Never guess or use outside information
-3. Always cite the source (document name and page number)
-4. Be precise with numbers and dates
-
-User question:
-{question}
+    question = st.text_input(
+        "Ask a question"
+    )
 
 
+    if st.button("Ask Gemini"):
 
-Provide:
-1. Direct answer
-2. Source citation (document name, page number)
-3. Any relevant context from the documents
-"""
+        if not question.strip():
+            st.warning("Please enter a question.")
+            st.stop()
 
-            # Call Gemini with pre-loaded files
-            contents = gemini_files + [prompt]
-            
-            response = client.models.generate_content(
-                model="gemini-2.0-flash",
-                contents=contents,
-            )
+        with st.spinner("Reading financial documents..."):
 
-            # Display answer
-            st.subheader("Answer")
-            st.write(response.text)
+            try:
 
-        except Exception as error:
-            st.error(f"Error: {error}")
+                # Get PDFs from Drive
+                results = drive.files().list(
+                    q=f"'{DRIVE_FOLDER_ID}' in parents and "
+                    "mimeType='application/pdf' and trashed=false",
+                    fields="files(id,name,webViewLink)"
+                ).execute()
+
+                files = results.get("files", [])
+
+                if not files:
+                    st.error(
+                        "No PDF documents found in Google Drive."
+                    )
+                    st.stop()
+
+
+                # Download PDF contents
+                document_parts = []
+
+                for drive_file in files:
+
+                    data = drive.files().get_media(
+                        fileId=drive_file["id"]
+                    ).execute()
+
+                    temp_path = f"temp_{drive_file['id']}.pdf"
+
+                    with open(temp_path, "wb") as f:
+                        f.write(data)
+
+
+                    gemini_file = client.files.upload(
+                        file=temp_path,
+                        config={
+                            "mime_type": "application/pdf",
+                            "display_name": drive_file["name"]
+                        }
+                    )
+
+                    document_parts.append(gemini_file)
+
+                    os.remove(temp_path)
+
+
+                prompt = f"""
+    You are an AI financial document analysis assistant.
+
+    Search ALL provided financial PDF documents before answering.
+
+    The user gives only a question. The user may not tell you the company,
+    document, report, period, or page.
+
+    Identify the correct document yourself.
+
+    Use ONLY information from the provided PDFs.
+
+    Do not guess.
+    Do not use outside information.
+    Do not mix companies or reporting periods.
+
+    If the question requires multiple documents, use all relevant documents.
+
+    If the information cannot be found, say:
+
+    "This information is not available in the uploaded documents."
+
+    Answer only what the user asked.
+
+    User question:
+    {question}
+    """
+
+
+                response = client.models.generate_content(
+                    model="gemini-3.5-flash",
+                    contents=document_parts + [prompt]
+                )
+
+
+                st.subheader("Answer")
+                st.write(response.text)
+
+
+            except Exception as error:
+                st.error(
+                    "Something went wrong while analyzing "
+                    "the documents."
+                )
+
+                st.code(str(error))
+
+else:
+    show_dashboard(drive, DRIVE_FOLDER_ID)
