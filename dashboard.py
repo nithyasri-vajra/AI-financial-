@@ -1,276 +1,184 @@
+import json
+import os
+
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
-import html
 
 
 # ============================================================
-# PAGE
+# SETUP
 # ============================================================
 
-st.set_page_config(
-    page_title="Investment Intelligence",
-    page_icon="📊",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+KNOWLEDGE_FILE = "financial_knowledge.json"
 
 
 # ============================================================
-# CSS
+# LOAD FINANCIAL KNOWLEDGE
 # ============================================================
 
-st.markdown(
-    """
-    <style>
+def load_knowledge():
 
-    .block-container {
-        max-width: 1550px;
-        padding: 2rem 2.5rem 3rem 2.5rem;
-    }
+    if not os.path.exists(KNOWLEDGE_FILE):
 
-    .dashboard-title {
-        font-size: 30px;
-        font-weight: 700;
-        color: #101828;
-        margin-bottom: 4px;
-    }
+        return {
+            "documents": []
+        }
 
-    .dashboard-subtitle {
-        font-size: 14px;
-        color: #667085;
-        margin-bottom: 25px;
-    }
+    try:
 
-    .company-header {
-        background: #ffffff;
-        border: 1px solid #eaecf0;
-        border-radius: 14px;
-        padding: 18px 22px;
-        margin-bottom: 22px;
-    }
+        with open(
+            KNOWLEDGE_FILE,
+            "r",
+            encoding="utf-8"
+        ) as file:
 
-    .company-name {
-        font-size: 22px;
-        font-weight: 700;
-        color: #101828;
-    }
+            data = json.load(file)
 
-    .company-meta {
-        margin-top: 5px;
-        font-size: 13px;
-        color: #667085;
-    }
+    except Exception:
 
-    .metric-card {
-        background: #ffffff;
-        border: 1px solid #eaecf0;
-        border-radius: 14px;
-        padding: 18px;
-        min-height: 125px;
-    }
+        return {
+            "documents": []
+        }
 
-    .metric-title {
-        color: #667085;
-        font-size: 13px;
-        margin-bottom: 9px;
-    }
+    if not isinstance(data, dict):
 
-    .metric-value {
-        color: #101828;
-        font-size: 25px;
-        font-weight: 700;
-    }
+        return {
+            "documents": []
+        }
 
-    .metric-change-positive {
-        color: #12b76a;
-        font-size: 12px;
-        margin-top: 7px;
-    }
+    documents = data.get(
+        "documents",
+        []
+    )
 
-    .metric-change-negative {
-        color: #f04438;
-        font-size: 12px;
-        margin-top: 7px;
-    }
+    if not isinstance(documents, list):
 
-    .section-title {
-        font-size: 19px;
-        font-weight: 650;
-        color: #101828;
-        margin-top: 28px;
-        margin-bottom: 13px;
-    }
+        documents = []
 
-    .risk-card {
-        background: #fff8f7;
-        border: 1px solid #fecdca;
-        border-radius: 12px;
-        padding: 15px;
-        margin-bottom: 10px;
-    }
+    data["documents"] = documents
 
-    .change-card {
-        background: #f8faff;
-        border: 1px solid #d1e0ff;
-        border-radius: 12px;
-        padding: 15px;
-        margin-bottom: 10px;
-    }
-
-    .source-card {
-        background: #f9fafb;
-        border: 1px solid #eaecf0;
-        border-radius: 10px;
-        padding: 13px 16px;
-        margin-bottom: 8px;
-    }
-
-    .insight-card {
-        background: #f8faff;
-        border: 1px solid #d1e0ff;
-        border-radius: 12px;
-        padding: 16px;
-        margin-bottom: 10px;
-    }
-
-    </style>
-    """,
-    unsafe_allow_html=True
-)
+    return data
 
 
 # ============================================================
 # HELPERS
 # ============================================================
 
-def safe_value(value):
-    """
-    Display value coming from the analysed Drive data.
-    No financial value is created here.
-    """
+def display_value(value):
 
-    if value is None or value == "":
+    if value is None:
+        return "N/A"
+
+    if value == "":
         return "N/A"
 
     return str(value)
 
 
-def escape(value):
-    return html.escape(str(value))
+def render_metric(
+    title,
+    value,
+    change=None
+):
 
+    with st.container(
+        border=True
+    ):
 
-def change_html(value):
-
-    if value is None or value == "":
-        return ""
-
-    try:
-
-        number = float(value)
-
-        if number >= 0:
-
-            return (
-                f'<div class="metric-change-positive">'
-                f'↑ {number}%'
-                f'</div>'
-            )
-
-        return (
-            f'<div class="metric-change-negative">'
-            f'↓ {abs(number)}%'
-            f'</div>'
+        st.caption(
+            title
         )
 
-    except Exception:
-
-        return (
-            f'<div class="metric-change-positive">'
-            f'{escape(value)}'
-            f'</div>'
+        st.subheader(
+            display_value(value)
         )
 
+        if change is not None and change != "":
 
-# ============================================================
-# NORMALIZE DATA
-# ============================================================
-
-def normalize_companies(analysis_data):
-
-    if not analysis_data:
-        return {}
-
-    # Multiple-company format:
-    #
-    # {
-    #   "Company A": {...},
-    #   "Company B": {...}
-    # }
-
-    if isinstance(analysis_data, dict):
-
-        if "company" in analysis_data:
-
-            company_name = analysis_data.get(
-                "company",
-                "Company"
+            st.caption(
+                f"Change: {change}"
             )
 
-            return {
-                company_name: analysis_data
-            }
 
-        return analysis_data
+def render_list(
+    items
+):
 
-    return {}
+    if not isinstance(
+        items,
+        list
+    ):
+        return
+
+    for item in items:
+
+        if isinstance(
+            item,
+            str
+        ):
+
+            text = item
+
+        elif isinstance(
+            item,
+            dict
+        ):
+
+            text = (
+                item.get("text")
+                or item.get("description")
+                or item.get("insight")
+                or item.get("risk")
+                or item.get("change")
+                or ""
+            )
+
+        else:
+
+            continue
+
+        if not text:
+            continue
+
+        with st.container(
+            border=True
+        ):
+
+            st.write(
+                text
+            )
 
 
-# ============================================================
-# KPI CARD
-# ============================================================
+def get_document_name(
+    document
+):
 
-def metric_card(title, value, change=None):
-
-    st.markdown(
-        f"""
-        <div class="metric-card">
-
-            <div class="metric-title">
-                {escape(title)}
-            </div>
-
-            <div class="metric-value">
-                {escape(safe_value(value))}
-            </div>
-
-            {change_html(change)}
-
-        </div>
-        """,
-        unsafe_allow_html=True
+    return (
+        document.get("company")
+        or document.get("file_name")
+        or "Unknown document"
     )
 
 
 # ============================================================
-# MAIN DASHBOARD
+# DASHBOARD
 # ============================================================
 
-def show_dashboard(analysis_data):
+def show_dashboard(
+    knowledge
+):
 
-    # --------------------------------------------------------
-    # Prepare company data
-    # --------------------------------------------------------
-
-    companies = normalize_companies(
-        analysis_data
+    documents = knowledge.get(
+        "documents",
+        []
     )
 
-    if not companies:
+
+    if not documents:
 
         st.warning(
-            "No financial data is available for the dashboard."
+            "No financial document summaries are available."
         )
 
         return
@@ -280,18 +188,12 @@ def show_dashboard(analysis_data):
     # HEADER
     # ========================================================
 
-    st.markdown(
-        '<div class="dashboard-title">'
-        'Investment Intelligence'
-        '</div>',
-        unsafe_allow_html=True
+    st.title(
+        "Investment Intelligence"
     )
 
-    st.markdown(
-        '<div class="dashboard-subtitle">'
-        'Financial performance, valuation context and risk overview'
-        '</div>',
-        unsafe_allow_html=True
+    st.caption(
+        "Dashboard generated from financial document summaries"
     )
 
 
@@ -306,7 +208,7 @@ def show_dashboard(analysis_data):
         )
 
         st.caption(
-            "Financial document analysis"
+            "Financial document summaries"
         )
 
         st.divider()
@@ -316,6 +218,7 @@ def show_dashboard(analysis_data):
             [
                 "Overview",
                 "Financial Performance",
+                "Business Performance",
                 "Risk Analysis",
                 "AI Insights",
                 "Source Documents"
@@ -325,7 +228,7 @@ def show_dashboard(analysis_data):
         st.divider()
 
         st.caption(
-            f"{len(companies)} compan{'y' if len(companies) == 1 else 'ies'} available"
+            f"{len(documents)} document summary(s)"
         )
 
 
@@ -333,67 +236,162 @@ def show_dashboard(analysis_data):
     # COMPANY SELECTOR
     # ========================================================
 
-    company_names = list(
-        companies.keys()
-    )
+    company_names = []
+
+    for document in documents:
+
+        if not isinstance(
+            document,
+            dict
+        ):
+            continue
+
+        company_names.append(
+            get_document_name(
+                document
+            )
+        )
+
+
+    if not company_names:
+
+        st.warning(
+            "No usable financial documents are available."
+        )
+
+        return
+
 
     selected_company = st.selectbox(
         "Company",
         company_names
     )
 
-    company_data = companies.get(
-        selected_company,
-        {}
+
+    selected_index = company_names.index(
+        selected_company
     )
+
+    document = documents[
+        selected_index
+    ]
 
 
     # ========================================================
-    # COMPANY INFORMATION
+    # DOCUMENT DATA
     # ========================================================
 
-    sector = company_data.get(
-        "sector",
-        "Not available"
-    )
-
-    country = company_data.get(
-        "country",
-        "Not available"
-    )
-
-    period = company_data.get(
-        "reporting_period",
-        "Latest available"
-    )
-
-
-    st.markdown(
-        f"""
-        <div class="company-header">
-
-            <div class="company-name">
-                {escape(selected_company)}
-            </div>
-
-            <div class="company-meta">
-                {escape(sector)}
-                &nbsp; · &nbsp;
-                {escape(country)}
-                &nbsp; · &nbsp;
-                Reporting period: {escape(period)}
-            </div>
-
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-
-    financials = company_data.get(
+    financials = document.get(
         "financials",
         {}
     )
+
+    historical = document.get(
+        "historical",
+        []
+    )
+
+    segments = document.get(
+        "segment_breakdown",
+        []
+    )
+
+    drivers = document.get(
+        "operating_drivers",
+        []
+    )
+
+    guidance = document.get(
+        "management_guidance",
+        []
+    )
+
+    risks = document.get(
+        "risks",
+        []
+    )
+
+    insights = document.get(
+        "investment_insights",
+        []
+    )
+
+    changes = document.get(
+        "recent_changes",
+        []
+    )
+
+    outlook = document.get(
+        "outlook",
+        []
+    )
+
+    summary = document.get(
+        "summary",
+        ""
+    )
+
+    file_name = document.get(
+        "file_name",
+        selected_company
+    )
+
+    drive_link = document.get(
+        "drive_link",
+        ""
+    )
+
+
+    # ========================================================
+    # COMPANY HEADER
+    # ========================================================
+
+    meta = []
+
+    industry = document.get(
+        "industry"
+    )
+
+    country = document.get(
+        "country"
+    )
+
+    reporting_period = document.get(
+        "reporting_period"
+    )
+
+    if industry:
+
+        meta.append(
+            str(industry)
+        )
+
+    if country:
+
+        meta.append(
+            str(country)
+        )
+
+    if reporting_period:
+
+        meta.append(
+            f"Reporting period: {reporting_period}"
+        )
+
+
+    with st.container(
+        border=True
+    ):
+
+        st.subheader(
+            selected_company
+        )
+
+        if meta:
+
+            st.caption(
+                " · ".join(meta)
+            )
 
 
     # ========================================================
@@ -402,347 +400,294 @@ def show_dashboard(analysis_data):
 
     if page == "Overview":
 
-        st.markdown(
-            '<div class="section-title">'
-            'Financial Overview'
-            '</div>',
-            unsafe_allow_html=True
+        st.subheader(
+            "Investment Overview"
         )
 
 
-        # ----------------------------------------------------
-        # KPI CARDS
-        # ----------------------------------------------------
+        columns = st.columns(
+            5
+        )
 
-        c1, c2, c3, c4, c5 = st.columns(5)
 
-        with c1:
+        metrics = [
 
-            metric_card(
+            (
                 "Revenue",
-                financials.get("revenue"),
-                financials.get("revenue_change")
-            )
+                financials.get(
+                    "revenue"
+                ),
+                financials.get(
+                    "revenue_change"
+                )
+            ),
 
-        with c2:
-
-            metric_card(
+            (
                 "Net Income",
-                financials.get("net_income"),
-                financials.get("net_income_change")
-            )
+                financials.get(
+                    "net_income"
+                ),
+                financials.get(
+                    "net_income_change"
+                )
+            ),
 
-        with c3:
+            (
+                "Operating Income",
+                financials.get(
+                    "operating_income"
+                ),
+                financials.get(
+                    "operating_income_change"
+                )
+            ),
 
-            metric_card(
+            (
                 "EPS",
-                financials.get("eps"),
-                financials.get("eps_change")
+                financials.get(
+                    "eps"
+                ),
+                financials.get(
+                    "eps_change"
+                )
+            ),
+
+            (
+                "Free Cash Flow",
+                financials.get(
+                    "free_cash_flow"
+                ),
+                financials.get(
+                    "free_cash_flow_change"
+                )
             )
-
-        with c4:
-
-            metric_card(
-                "Total Assets",
-                financials.get("total_assets")
-            )
-
-        with c5:
-
-            metric_card(
-                "Cash",
-                financials.get("cash")
-            )
+        ]
 
 
-        # ----------------------------------------------------
-        # PERFORMANCE + SEGMENTS
-        # ----------------------------------------------------
+        for column, metric in zip(
+            columns,
+            metrics
+        ):
 
-        left, right = st.columns(
-            [1.7, 1]
-        )
+            with column:
+
+                render_metric(
+                    metric[0],
+                    metric[1],
+                    metric[2]
+                )
 
 
         # ====================================================
-        # PERFORMANCE GRAPH
+        # HISTORICAL PERFORMANCE
         # ====================================================
 
-        with left:
+        if historical:
 
-            st.markdown(
-                '<div class="section-title">'
-                'Financial Performance'
-                '</div>',
-                unsafe_allow_html=True
-            )
+            rows = []
 
-            historical = company_data.get(
-                "historical",
-                []
-            )
+            for item in historical:
 
-            if historical:
+                if not isinstance(
+                    item,
+                    dict
+                ):
+                    continue
+
+                period = (
+                    item.get("period")
+                    or item.get("year")
+                    or item.get("date")
+                )
+
+                if not period:
+                    continue
+
+                row = {
+                    "Period": str(
+                        period
+                    )
+                }
+
+                for key in [
+                    "revenue",
+                    "net_income",
+                    "operating_income",
+                    "ebitda"
+                ]:
+
+                    value = item.get(
+                        key
+                    )
+
+                    if value is None:
+                        continue
+
+                    try:
+
+                        row[key] = float(
+                            value
+                        )
+
+                    except (
+                        ValueError,
+                        TypeError
+                    ):
+
+                        continue
+
+                rows.append(
+                    row
+                )
+
+
+            if rows:
 
                 df = pd.DataFrame(
-                    historical
+                    rows
                 )
 
-                if "period" in df.columns:
 
-                    chart_columns = []
+                chart_columns = [
+                    column
+                    for column in [
+                        "revenue",
+                        "net_income",
+                        "operating_income",
+                        "ebitda"
+                    ]
+                    if column in df.columns
+                ]
 
-                    if "revenue" in df.columns:
-                        chart_columns.append(
-                            "revenue"
-                        )
 
-                    if "net_income" in df.columns:
-                        chart_columns.append(
-                            "net_income"
-                        )
+                if chart_columns:
 
-                    if chart_columns:
-
-                        chart_df = df[
-                            ["period"] + chart_columns
-                        ].copy()
-
-                        chart_df = chart_df.rename(
-                            columns={
-                                "revenue": "Revenue",
-                                "net_income": "Net Income"
-                            }
-                        )
-
-                        chart_df = chart_df.set_index(
-                            "period"
-                        )
-
-                        st.line_chart(
-                            chart_df,
-                            height=360,
-                            use_container_width=True
-                        )
-
-                    else:
-
-                        st.info(
-                            "Historical financial data is not available."
-                        )
-
-                else:
-
-                    st.info(
-                        "Historical periods are not available."
+                    st.subheader(
+                        "Historical Performance"
                     )
 
-            else:
 
-                st.info(
-                    "Historical financial data is not available."
+                    rename_map = {
+
+                        "revenue":
+                            "Revenue",
+
+                        "net_income":
+                            "Net Income",
+
+                        "operating_income":
+                            "Operating Income",
+
+                        "ebitda":
+                            "EBITDA"
+                    }
+
+
+                    chart_df = df[
+                        ["Period"] + chart_columns
+                    ].rename(
+                        columns=rename_map
+                    )
+
+
+                    fig = px.line(
+                        chart_df,
+                        x="Period",
+                        y=[
+                            rename_map[column]
+                            for column in chart_columns
+                        ],
+                        markers=True
+                    )
+
+
+                    fig.update_layout(
+                        height=400,
+                        hovermode="x unified",
+                        legend_title=None
+                    )
+
+
+                    st.plotly_chart(
+                        fig,
+                        use_container_width=True
+                    )
+
+
+        # ====================================================
+        # BUSINESS MIX
+        # ====================================================
+
+        if segments:
+
+            segment_rows = []
+
+            for item in segments:
+
+                if not isinstance(
+                    item,
+                    dict
+                ):
+                    continue
+
+                name = (
+                    item.get("name")
+                    or item.get("segment")
                 )
 
+                value = (
+                    item.get("value")
+                    if item.get("value") is not None
+                    else item.get("revenue")
+                )
 
-        # ====================================================
-        # SEGMENT DONUT
-        # ====================================================
+                if value is None:
 
-        with right:
+                    value = item.get(
+                        "income"
+                    )
 
-            st.markdown(
-                '<div class="section-title">'
-                'Business Segment Mix'
-                '</div>',
-                unsafe_allow_html=True
-            )
+                if not name or value is None:
+                    continue
 
-            segments = company_data.get(
-                "segment_breakdown",
-                []
-            )
+                try:
 
-            valid_segments = []
+                    segment_rows.append(
+                        {
+                            "Segment": name,
+                            "Value": float(
+                                value
+                            )
+                        }
+                    )
 
-            for segment in segments:
-
-                if (
-                    segment.get("name")
-                    and segment.get("value") is not None
+                except (
+                    ValueError,
+                    TypeError
                 ):
 
-                    valid_segments.append(
-                        segment
-                    )
+                    continue
 
-            if valid_segments:
+
+            if segment_rows:
 
                 segment_df = pd.DataFrame(
-                    valid_segments
+                    segment_rows
                 )
+
+
+                st.subheader(
+                    "Business Mix"
+                )
+
 
                 fig = px.pie(
                     segment_df,
-                    names="name",
-                    values="value",
-                    hole=0.58
+                    names="Segment",
+                    values="Value",
+                    hole=0.55
                 )
 
-                fig.update_layout(
-                    height=360,
-                    margin=dict(
-                        l=5,
-                        r=5,
-                        t=10,
-                        b=5
-                    ),
-                    legend=dict(
-                        orientation="h",
-                        y=-0.1
-                    )
-                )
-
-                st.plotly_chart(
-                    fig,
-                    use_container_width=True
-                )
-
-            else:
-
-                st.info(
-                    "Business segment data is not available."
-                )
-
-
-        # ----------------------------------------------------
-        # FINANCIAL POSITION
-        # ----------------------------------------------------
-
-        st.markdown(
-            '<div class="section-title">'
-            'Financial Position'
-            '</div>',
-            unsafe_allow_html=True
-        )
-
-        balance = []
-
-        for key, label in [
-            ("total_assets", "Assets"),
-            ("total_debt", "Debt"),
-            ("cash", "Cash")
-        ]:
-
-            value = financials.get(
-                key
-            )
-
-            if value is not None:
-
-                balance.append(
-                    {
-                        "Metric": label,
-                        "Value": value
-                    }
-                )
-
-        if balance:
-
-            balance_df = pd.DataFrame(
-                balance
-            )
-
-            fig = px.bar(
-                balance_df,
-                x="Metric",
-                y="Value",
-                text_auto=True
-            )
-
-            fig.update_layout(
-                height=320,
-                margin=dict(
-                    l=10,
-                    r=10,
-                    t=20,
-                    b=10
-                ),
-                xaxis_title=None,
-                yaxis_title=None
-            )
-
-            st.plotly_chart(
-                fig,
-                use_container_width=True
-            )
-
-        else:
-
-            st.info(
-                "Financial position data is not available."
-            )
-
-
-        # ----------------------------------------------------
-        # MULTI COMPANY COMPARISON
-        # ----------------------------------------------------
-
-        if len(companies) > 1:
-
-            st.markdown(
-                '<div class="section-title">'
-                'Company Comparison'
-                '</div>',
-                unsafe_allow_html=True
-            )
-
-            comparison = []
-
-            for name, data in companies.items():
-
-                company_financials = data.get(
-                    "financials",
-                    {}
-                )
-
-                comparison.append(
-                    {
-                        "Company": name,
-                        "Revenue": company_financials.get(
-                            "revenue"
-                        ),
-                        "Net Income": company_financials.get(
-                            "net_income"
-                        )
-                    }
-                )
-
-            comparison_df = pd.DataFrame(
-                comparison
-            )
-
-            comparison_df = comparison_df.dropna(
-                subset=["Revenue"],
-                how="all"
-            )
-
-            if not comparison_df.empty:
-
-                fig = px.bar(
-                    comparison_df,
-                    x="Company",
-                    y=[
-                        "Revenue",
-                        "Net Income"
-                    ],
-                    barmode="group"
-                )
-
-                fig.update_layout(
-                    height=380,
-                    xaxis_title=None,
-                    yaxis_title=None
-                )
 
                 st.plotly_chart(
                     fig,
@@ -756,109 +701,267 @@ def show_dashboard(analysis_data):
 
     elif page == "Financial Performance":
 
-        st.markdown(
-            '<div class="section-title">'
-            'Financial Performance'
-            '</div>',
-            unsafe_allow_html=True
+        st.subheader(
+            "Financial Performance"
         )
 
-        historical = company_data.get(
-            "historical",
-            []
-        )
 
-        if not historical:
+        rows = []
+
+        for item in historical:
+
+            if not isinstance(
+                item,
+                dict
+            ):
+                continue
+
+            period = (
+                item.get("period")
+                or item.get("year")
+                or item.get("date")
+            )
+
+            if not period:
+                continue
+
+            row = {
+                "Period": str(
+                    period
+                )
+            }
+
+
+            for key in [
+                "revenue",
+                "net_income",
+                "operating_income",
+                "ebitda",
+                "eps",
+                "free_cash_flow"
+            ]:
+
+                value = item.get(
+                    key
+                )
+
+                if value is None:
+                    continue
+
+                try:
+
+                    row[key] = float(
+                        value
+                    )
+
+                except (
+                    ValueError,
+                    TypeError
+                ):
+
+                    continue
+
+
+            rows.append(
+                row
+            )
+
+
+        if not rows:
 
             st.info(
-                "Historical financial data is not available."
+                "Historical financial data is not available in the summary."
             )
 
         else:
 
             df = pd.DataFrame(
-                historical
+                rows
             )
 
-
-            # Revenue
-            if "revenue" in df.columns:
-
-                revenue_df = df[
-                    ["period", "revenue"]
-                ].dropna()
-
-                if not revenue_df.empty:
-
-                    revenue_df = revenue_df.rename(
-                        columns={
-                            "period": "Period",
-                            "revenue": "Revenue"
-                        }
-                    )
-
-                    fig = px.line(
-                        revenue_df,
-                        x="Period",
-                        y="Revenue",
-                        markers=True,
-                        title="Revenue Trend"
-                    )
-
-                    fig.update_layout(
-                        height=400
-                    )
-
-                    st.plotly_chart(
-                        fig,
-                        use_container_width=True
-                    )
-
-
-            # Net Income
-            if "net_income" in df.columns:
-
-                income_df = df[
-                    ["period", "net_income"]
-                ].dropna()
-
-                if not income_df.empty:
-
-                    income_df = income_df.rename(
-                        columns={
-                            "period": "Period",
-                            "net_income": "Net Income"
-                        }
-                    )
-
-                    fig = px.bar(
-                        income_df,
-                        x="Period",
-                        y="Net Income",
-                        title="Net Income Trend"
-                    )
-
-                    fig.update_layout(
-                        height=400
-                    )
-
-                    st.plotly_chart(
-                        fig,
-                        use_container_width=True
-                    )
-
-
-            st.markdown(
-                '<div class="section-title">'
-                'Historical Financial Data'
-                '</div>',
-                unsafe_allow_html=True
-            )
 
             st.dataframe(
                 df,
                 use_container_width=True,
                 hide_index=True
+            )
+
+
+            for metric in [
+                "revenue",
+                "net_income",
+                "operating_income",
+                "ebitda",
+                "eps",
+                "free_cash_flow"
+            ]:
+
+                if metric not in df.columns:
+                    continue
+
+
+                chart_df = df[
+                    ["Period", metric]
+                ].dropna()
+
+
+                if chart_df.empty:
+                    continue
+
+
+                label = metric.replace(
+                    "_",
+                    " "
+                ).title()
+
+
+                fig = px.line(
+                    chart_df,
+                    x="Period",
+                    y=metric,
+                    markers=True,
+                    title=f"{label} Trend"
+                )
+
+
+                st.plotly_chart(
+                    fig,
+                    use_container_width=True
+                )
+
+
+    # ========================================================
+    # BUSINESS PERFORMANCE
+    # ========================================================
+
+    elif page == "Business Performance":
+
+        st.subheader(
+            "Business Performance"
+        )
+
+
+        if segments:
+
+            rows = []
+
+            for item in segments:
+
+                if not isinstance(
+                    item,
+                    dict
+                ):
+                    continue
+
+                name = (
+                    item.get("name")
+                    or item.get("segment")
+                )
+
+                value = (
+                    item.get("value")
+                    if item.get("value") is not None
+                    else item.get("revenue")
+                )
+
+                if value is None:
+
+                    value = item.get(
+                        "income"
+                    )
+
+                if not name or value is None:
+                    continue
+
+                try:
+
+                    rows.append(
+                        {
+                            "Segment": name,
+                            "Value": float(
+                                value
+                            )
+                        }
+                    )
+
+                except (
+                    ValueError,
+                    TypeError
+                ):
+
+                    continue
+
+
+            if rows:
+
+                df = pd.DataFrame(
+                    rows
+                )
+
+
+                left, right = st.columns(
+                    2
+                )
+
+
+                with left:
+
+                    fig = px.bar(
+                        df,
+                        x="Segment",
+                        y="Value",
+                        text_auto=True
+                    )
+
+
+                    st.plotly_chart(
+                        fig,
+                        use_container_width=True
+                    )
+
+
+                with right:
+
+                    fig = px.pie(
+                        df,
+                        names="Segment",
+                        values="Value",
+                        hole=0.55
+                    )
+
+
+                    st.plotly_chart(
+                        fig,
+                        use_container_width=True
+                    )
+
+
+        else:
+
+            st.info(
+                "Business segment information is not available in the summary."
+            )
+
+
+        if drivers:
+
+            st.subheader(
+                "Key Business Drivers"
+            )
+
+            render_list(
+                drivers
+            )
+
+
+        if guidance:
+
+            st.subheader(
+                "Management Guidance"
+            )
+
+            render_list(
+                guidance
             )
 
 
@@ -868,62 +971,75 @@ def show_dashboard(analysis_data):
 
     elif page == "Risk Analysis":
 
-        st.markdown(
-            '<div class="section-title">'
-            'Risk Analysis'
-            '</div>',
-            unsafe_allow_html=True
+        st.subheader(
+            "Risk Analysis"
         )
 
-        risks = company_data.get(
-            "risks",
-            []
-        )
 
         if not risks:
 
             st.info(
-                "Risk information is not available in the documents."
+                "Risk information is not available in the summary."
             )
 
         else:
 
             for risk in risks:
 
-                name = risk.get(
-                    "name",
-                    "Risk"
-                )
+                if isinstance(
+                    risk,
+                    dict
+                ):
 
-                level = risk.get(
-                    "level",
-                    "Not specified"
-                )
+                    name = (
+                        risk.get("name")
+                        or risk.get("risk")
+                        or "Risk"
+                    )
 
-                description = risk.get(
-                    "description",
-                    ""
-                )
+                    level = risk.get(
+                        "level",
+                        "Not specified"
+                    )
 
-                st.markdown(
-                    f"""
-                    <div class="risk-card">
+                    description = (
+                        risk.get("description")
+                        or risk.get("text")
+                        or ""
+                    )
 
-                        <b>{escape(name)}</b>
 
-                        <br><br>
+                    with st.container(
+                        border=True
+                    ):
 
-                        Risk level:
-                        <b>{escape(level)}</b>
+                        st.markdown(
+                            f"**{name}**"
+                        )
 
-                        <br><br>
+                        st.write(
+                            f"Risk level: {level}"
+                        )
 
-                        {escape(description)}
+                        if description:
 
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
+                            st.write(
+                                description
+                            )
+
+
+                elif isinstance(
+                    risk,
+                    str
+                ):
+
+                    with st.container(
+                        border=True
+                    ):
+
+                        st.write(
+                            risk
+                        )
 
 
     # ========================================================
@@ -932,143 +1048,83 @@ def show_dashboard(analysis_data):
 
     elif page == "AI Insights":
 
-        st.markdown(
-            '<div class="section-title">'
-            'Financial Insights'
-            '</div>',
-            unsafe_allow_html=True
+        st.subheader(
+            "AI Insights"
         )
 
-        insights = company_data.get(
-            "investment_insights",
-            []
-        )
+
+        if summary:
+
+            with st.container(
+                border=True
+            ):
+
+                st.write(
+                    summary
+                )
+
 
         if insights:
 
-            for insight in insights:
+            st.subheader(
+                "Key Insights"
+            )
 
-                st.markdown(
-                    f"""
-                    <div class="insight-card">
-                        {escape(insight)}
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
-
-        else:
-
-            st.info(
-                "No financial insights were found."
+            render_list(
+                insights
             )
 
 
-        st.markdown(
-            '<div class="section-title">'
-            'Recent Changes'
-            '</div>',
-            unsafe_allow_html=True
-        )
-
-        changes = company_data.get(
-            "recent_changes",
-            []
-        )
-
         if changes:
 
-            for change in changes:
+            st.subheader(
+                "Recent Material Changes"
+            )
 
-                st.markdown(
-                    f"""
-                    <div class="change-card">
-                        {escape(change)}
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
+            render_list(
+                changes
+            )
 
-        else:
 
-            st.info(
-                "No recent financial changes were found."
+        if outlook:
+
+            st.subheader(
+                "Outlook"
+            )
+
+            render_list(
+                outlook
             )
 
 
     # ========================================================
-    # SOURCE DOCUMENTS
+    # SOURCE DOCUMENT
     # ========================================================
 
     elif page == "Source Documents":
 
-        st.markdown(
-            '<div class="section-title">'
-            'Source Documents'
-            '</div>',
-            unsafe_allow_html=True
+        st.subheader(
+            "Source Document"
         )
 
-        documents = company_data.get(
-            "documents",
-            []
-        )
 
-        if documents:
+        with st.container(
+            border=True
+        ):
 
-            for document in documents:
-
-                if isinstance(document, dict):
-
-                    name = document.get(
-                        "name",
-                        "Document"
-                    )
-
-                    link = document.get(
-                        "link",
-                        ""
-                    )
-
-                else:
-
-                    name = document
-                    link = ""
-
-
-                if link:
-
-                    st.markdown(
-                        f"""
-                        <div class="source-card">
-
-                            📄 <b>{escape(name)}</b>
-
-                            <br><br>
-
-                            <a href="{escape(link)}"
-                               target="_blank">
-                               Open document
-                            </a>
-
-                        </div>
-                        """,
-                        unsafe_allow_html=True
-                    )
-
-                else:
-
-                    st.markdown(
-                        f"""
-                        <div class="source-card">
-                            📄 <b>{escape(name)}</b>
-                        </div>
-                        """,
-                        unsafe_allow_html=True
-                    )
-
-        else:
-
-            st.info(
-                "No source documents are available."
+            st.write(
+                f"📄 {file_name}"
             )
+
+
+            if drive_link:
+
+                st.markdown(
+                    f"[Open document]({drive_link})"
+                )
+
+            else:
+
+                st.info(
+                    "Drive link not available."
+                )

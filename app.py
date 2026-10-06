@@ -1,4 +1,5 @@
 import os
+
 import streamlit as st
 
 from dotenv import load_dotenv
@@ -7,39 +8,69 @@ from google import genai
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
-from dashboard import show_dashboard
+
+
+# ============================================================
+# SETUP
+# ============================================================
 
 load_dotenv()
 
-api_key = os.getenv("GEMINI_API_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-if not api_key:
+if not GEMINI_API_KEY:
     st.error("GEMINI_API_KEY is missing in the .env file.")
     st.stop()
 
 
-client = genai.Client(api_key=api_key)
+client = genai.Client(
+    api_key=GEMINI_API_KEY
+)
+
+MODEL = "gemini-3.8-flash"
+
+FILE_SEARCH_STORE_NAME = (
+    "fileSearchStores/ai-investment-analysis-35a7218mgjkj"
+)
 
 DRIVE_FOLDER_ID = "16f8bYqRFyzL3-eNFY2XL9FrmtI8K61ar"
 
-# Google Drive
-SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
+SCOPES = [
+    "https://www.googleapis.com/auth/drive.readonly"
+]
+
+
+# ============================================================
+# GOOGLE DRIVE AUTHENTICATION
+# ============================================================
 
 if os.path.exists("token.json"):
+
     creds = Credentials.from_authorized_user_file(
         "token.json",
         SCOPES
     )
+
 else:
+
     flow = InstalledAppFlow.from_client_secrets_file(
         "finanicial-drive-credential.json",
         SCOPES
     )
 
-    creds = flow.run_local_server(port=0)
+    creds = flow.run_local_server(
+        port=0
+    )
 
-    with open("token.json", "w") as token:
-        token.write(creds.to_json())
+    with open(
+        "token.json",
+        "w",
+        encoding="utf-8"
+    ) as token:
+
+        token.write(
+            creds.to_json()
+        )
 
 
 drive = build(
@@ -49,119 +80,294 @@ drive = build(
 )
 
 
+# ============================================================
+# GET DRIVE DOCUMENT LINK
+# ============================================================
+
+def get_drive_link(file_name):
+
+    result = drive.files().list(
+        q=(
+            f"'{DRIVE_FOLDER_ID}' in parents "
+            f"and name='{file_name}' "
+            "and trashed=false"
+        ),
+        fields="files(id,name,webViewLink)",
+        pageSize=1
+    ).execute()
+
+    files = result.get(
+        "files",
+        []
+    )
+
+    if files:
+
+        return files[0].get(
+            "webViewLink",
+            ""
+        )
+
+    return ""
+
+
+# ============================================================
+# FILE SEARCH
+# ============================================================
+
+def search_index(question):
+
+    prompt = f"""
+You are a financial document assistant.
+
+The financial documents are already indexed in the
+Gemini File Search Store.
+
+USER QUESTION:
+{question}
+
+Answer the user's question using ONLY the indexed
+financial documents.
+
+Rules:
+
+- Search the indexed documents for the relevant information.
+- Retrieve only the information needed for the answer.
+- Do not use outside knowledge.
+- Do not guess.
+- Do not invent values.
+- Do not mix companies.
+- Do not mix reporting periods.
+- If the question asks "why", search for the actual
+  explanation in the indexed documents, not only the number.
+- If multiple pieces of information are required,
+  search for all of them before answering.
+- If the information is not available, say exactly:
+
+This information is not available in the uploaded documents.
+
+Give a brief and direct answer.
+
+USER QUESTION:
+{question}
+"""
+
+
+    interaction = client.interactions.create(
+        model=MODEL,
+        input=prompt,
+        tools=[
+            {
+                "type": "file_search",
+                "file_search_store_names": [
+                    FILE_SEARCH_STORE_NAME
+                ]
+            }
+        ]
+    )
+
+
+    answer_parts = []
+    sources = []
+
+
+    for step in interaction.steps:
+
+        if step.type != "model_output":
+            continue
+
+
+        for content_block in step.content:
+
+            if content_block.type != "text":
+                continue
+
+
+            if content_block.text:
+
+                answer_parts.append(
+                    content_block.text
+                )
+
+
+            annotations = getattr(
+                content_block,
+                "annotations",
+                None
+            )
+
+            if not annotations:
+                continue
+
+
+            for annotation in annotations:
+
+                if annotation.type != "file_citation":
+                    continue
+
+
+                source = {
+                    "file_name": getattr(
+                        annotation,
+                        "file_name",
+                        ""
+                    ),
+                    "source": getattr(
+                        annotation,
+                        "source",
+                        ""
+                    )
+                }
+
+
+                if source not in sources:
+
+                    sources.append(
+                        source
+                    )
+
+
+    return {
+        "answer": "\n".join(
+            answer_parts
+        ).strip(),
+        "sources": sources
+    }
+
+
+# ============================================================
 # UI
+# ============================================================
+
 page = st.sidebar.radio(
     "Go to",
-    ["AI Chat", "Dashboard"]
+    [
+        "AI Chat",
+        "Dashboard"
+    ]
 )
 
+
+# ============================================================
+# AI CHAT
+# ============================================================
+
 if page == "AI Chat":
+
+    st.title(
+        "AI Financial Assistant"
+    )
+
 
     question = st.text_input(
         "Ask a question"
     )
 
 
-    if st.button("Ask Gemini"):
+    if st.button(
+        "Ask Gemini"
+    ):
 
         if not question.strip():
-            st.warning("Please enter a question.")
+
+            st.warning(
+                "Please enter a question."
+            )
+
             st.stop()
 
-        with st.spinner("Reading financial documents..."):
+
+        with st.spinner(
+            "Searching indexed documents..."
+        ):
 
             try:
 
-                # Get PDFs from Drive
-                results = drive.files().list(
-                    q=f"'{DRIVE_FOLDER_ID}' in parents and "
-                    "mimeType='application/pdf' and trashed=false",
-                    fields="files(id,name,webViewLink)"
-                ).execute()
-
-                files = results.get("files", [])
-
-                if not files:
-                    st.error(
-                        "No PDF documents found in Google Drive."
-                    )
-                    st.stop()
-
-
-                # Download PDF contents
-                document_parts = []
-
-                for drive_file in files:
-
-                    data = drive.files().get_media(
-                        fileId=drive_file["id"]
-                    ).execute()
-
-                    temp_path = f"temp_{drive_file['id']}.pdf"
-
-                    with open(temp_path, "wb") as f:
-                        f.write(data)
-
-
-                    gemini_file = client.files.upload(
-                        file=temp_path,
-                        config={
-                            "mime_type": "application/pdf",
-                            "display_name": drive_file["name"]
-                        }
-                    )
-
-                    document_parts.append(gemini_file)
-
-                    os.remove(temp_path)
-
-
-                prompt = f"""
-    You are an AI financial document analysis assistant.
-
-    Search ALL provided financial PDF documents before answering.
-
-    The user gives only a question. The user may not tell you the company,
-    document, report, period, or page.
-
-    Identify the correct document yourself.
-
-    Use ONLY information from the provided PDFs.
-
-    Do not guess.
-    Do not use outside information.
-    Do not mix companies or reporting periods.
-
-    If the question requires multiple documents, use all relevant documents.
-
-    If the information cannot be found, say:
-
-    "This information is not available in the uploaded documents."
-
-    Answer only what the user asked.
-
-    User question:
-    {question}
-    """
-
-
-                response = client.models.generate_content(
-                    model="gemini-3.5-flash",
-                    contents=document_parts + [prompt]
+                result = search_index(
+                    question.strip()
                 )
 
 
-                st.subheader("Answer")
-                st.write(response.text)
+                st.subheader(
+                    "Answer"
+                )
+
+                st.write(
+                    result["answer"]
+                )
+
+
+                if result["sources"]:
+
+                    st.subheader(
+                        "Sources"
+                    )
+
+
+                    shown_sources = set()
+
+
+                    for source in result["sources"]:
+
+                        file_name = source.get(
+                            "file_name",
+                            ""
+                        )
+
+
+                        if not file_name:
+                            continue
+
+
+                        if file_name in shown_sources:
+                            continue
+
+
+                        shown_sources.add(
+                            file_name
+                        )
+
+
+                        drive_link = get_drive_link(
+                            file_name
+                        )
+
+
+                        if drive_link:
+
+                            st.markdown(
+                                f"[{file_name}]"
+                                f"({drive_link})"
+                            )
+
+                        else:
+
+                            st.write(
+                                file_name
+                            )
 
 
             except Exception as error:
+
                 st.error(
-                    "Something went wrong while analyzing "
-                    "the documents."
+                    "File Search failed."
                 )
 
-                st.code(str(error))
+                st.exception(
+                    error
+                )
+
+
+# ============================================================
+# DASHBOARD
+# ============================================================
 
 else:
-    show_dashboard(drive, DRIVE_FOLDER_ID)
+
+    st.title(
+        "Dashboard"
+    )
+
+    st.info(
+        "Dashboard is separate from the File Search based AI Chat flow."
+    )
